@@ -10,7 +10,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 }));
-app.options('*', cors());
+app.options('/{*path}', cors());
 app.use(express.json());
 
 const SHOPIFY_API_URL = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-07/graphql.json`;
