@@ -15,7 +15,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { file_reference } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch { body = {}; }
+    }
+    if (!body || typeof body !== 'object') body = {};
+
+    const { file_reference } = body;
 
     if (!file_reference) {
       return res.status(400).json({ error: 'file_reference is required' });
