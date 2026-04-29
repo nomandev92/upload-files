@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "functions": {
-    "api/get-media.js": {
-      "memory": 512,
-      "maxDuration": 15
-    }
-  }
+  "builds": [
+    { "src": "api/get-media.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/get-media", "dest": "/api/get-media.js" }
+  ]
 }
