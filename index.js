@@ -11,172 +11,144 @@ app.use(express.json());
 const SHOPIFY_API_URL = `https://${process.env.SHOPIFY_STORE}/admin/api/2024-07/graphql.json`;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-app.post('/api/create-bundle', async (req, res) => {
+
+// Route
+app.post('/api/get-media', async (req, res) => {
   try {
-    const products = req.body.products;
-    const globalIds = products.map(p => `gid://shopify/Product/${p.productId}`);
-    const mainProductId = `gid://shopify/Product/${req.body.mainProductId}`;
-    const mainProductTitle = req.body.mainProductTitle || 'Bundle - Any 5 Pieces - 70% OFF';
+    console.log("📥 Incoming data:", req.body);
 
-    // Build GraphQL query to fetch product options
-    const query = `
-      {
-        ${globalIds.map((id, index) => `
-          product${index}: node(id: "${id}") {
-            ... on Product {
-              id
-              options {
-                id
-                name
-                values
-              }
-              variants(first: 1) {
-                edges {
-                  node {
-                    price
-                  }
-                }
-              }
-            }
-          }
-        `).join('\n')}
-      }
-    `;
+    const { file_reference } = req.body;
 
-    const productResponse = await fetch(SHOPIFY_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-      },
-      body: JSON.stringify({ query }),
-    });
-
-    const productResult = await productResponse.json();
-    const data = productResult.data;
-
-
-    const components = products.map((product, index) => {
-      const productData = data[`product${index}`];
-      const variant = productData.variants.edges[0].node;
-      const optionSelections = productData.options.map(opt => {
-        const clientOption = product.options?.find(o => o.name.toLowerCase() === opt.name.toLowerCase());
-        return {
-          componentOptionId: opt.id,
-          name: opt.name,
-          values: clientOption ? [clientOption.value] : [opt.values[0]]
-        };
+    if (!file_reference) {
+      return res.status(400).json({
+        error: 'file_reference is required'
       });
+    }
 
-      return {
-        productId: productData.id,
-        quantity: product.quantity,
-        optionSelections
-      };
-    });
-
-    const bundleMutation = `
-      mutation {
-        productBundleUpdate(
-          input: {
-            productId: "${mainProductId}",
-            title: "${mainProductTitle}",
-            components: [
-              ${components.map(component => `
-                {
-                  productId: "${component.productId}",
-                  quantity: ${component.quantity},
-                  optionSelections: [
-                    ${component.optionSelections.map(selection => `
-                      {
-                        componentOptionId: "${selection.componentOptionId}",
-                        name: "${selection.name}",
-                        values: ["${selection.values[0]}"]
-                      }
-                    `).join(',')}
-                  ]
-                }
-              `).join(',')}
-            ]
-          }
-        ) {
-          userErrors {
-            field
-            message
-          }
-          productBundleOperation {
-            product {
-              variants(first: 1) {
-                edges {
-                  node { 
-                    id
-                  }
-                }
-              }
+    // GraphQL query
+    const query = `
+      query getMedia($id: ID!) {
+        node(id: $id) {
+          id
+          __typename
+          ... on MediaImage {
+            image {
+              url
             }
+          }
+          ... on GenericFile {
+            url
           }
         }
       }
     `;
 
-    // const bundleMutation = `
-    //  mutation {
-    //   productBundleCreate(
-    //     input: {
-    //       title: "Bundle Builder",
-    //       components: [
-    //         {
-    //           productId: "gid://shopify/Product/8393959112971",
-    //           quantity: 1,
-    //           optionSelections: [
-    //             {
-    //               componentOptionId: "gid://shopify/ProductOption/10687583912203",
-    //               name: "Farbe",
-    //               values: "Gold"
-    //             }
-    //           ]
-    //         },
-    //         {
-    //           productId: "gid://shopify/Product/8393959112971",
-    //           quantity: 2,
-    //           optionSelections: [
-    //             {
-    //               componentOptionId: "gid://shopify/ProductOption/10687583912203",
-    //               name: "Farbe",
-    //               values: "Gold"
-    //             }
-    //           ]
-    //         }
-    //       ]
-    //     }
-    //   ) {
-    //     userErrors {
-    //       field
-    //       message
-    //     }
-    //   }
-    // }
-    // `;
+    // Timeout controller
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const bundleResponse = await fetch(SHOPIFY_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-      },
-      body: JSON.stringify({ query: bundleMutation }),
+    let response;
+
+    try {
+      response = await fetch(SHOPIFY_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        },
+        body: JSON.stringify({
+          query,
+          variables: { id: file_reference },
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      console.error("❌ Fetch error:", err);
+      return res.status(500).json({
+        error: 'Failed to reach Shopify API',
+        details: err.message
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    console.log("📡 Shopify status:", response.status);
+
+    const text = await response.text();
+    console.log("📦 Raw Shopify response:", text);
+
+    let result;
+
+    try {
+      result = JSON.parse(text);
+    } catch (err) {
+      return res.status(500).json({
+        error: 'Invalid JSON from Shopify',
+        raw: text
+      });
+    }
+
+    if (result.errors) {
+      console.error("❌ GraphQL errors:", result.errors);
+      return res.status(500).json({
+        error: 'Shopify GraphQL error',
+        details: result.errors
+      });
+    }
+
+    const node = result.data?.node;
+
+    console.log("🔍 Resolved node:", node);
+
+    if (!node) {
+      return res.status(404).json({
+        error: 'Media not found',
+        fullResponse: result
+      });
+    }
+
+    let mediaUrl = null;
+
+    // Handle MediaImage
+    if (node.image?.url) {
+      mediaUrl = node.image.url;
+    }
+
+    // Handle GenericFile
+    if (!mediaUrl && node.url) {
+      mediaUrl = node.url;
+    }
+
+    if (!mediaUrl) {
+      return res.status(500).json({
+        error: 'Could not extract media URL',
+        node
+      });
+    }
+
+    console.log("✅ Final URL:", mediaUrl);
+
+    return res.json({
+      success: true,
+      mediaId: node.id,
+      mediaUrl: mediaUrl
     });
 
-    const bundleData = await bundleResponse.json();
-    console.log('Bundle Data:', bundleData);
-    res.json(bundleData);
-
   } catch (error) {
-    console.error('Unexpected server error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('❌ Server error:', error);
+
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: error.message
+    });
   }
+});
+
+app.get('/', (req, res) => {
+  res.send('API is working ✅');
 });
 
 app.listen(3000, () => {
   console.log('Server running on http://localhost:3000');
 });
+
