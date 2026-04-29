@@ -76,12 +76,16 @@ module.exports = async (req, res) => {
 
     const node = result.data?.node;
     if (!node) {
-      return res.status(404).json({ error: 'Media not found' });
+      return res.status(404).json({ error: 'Media not found', file_reference });
     }
 
     const mediaUrl = node.image?.url || node.url || null;
     if (!mediaUrl) {
-      return res.status(500).json({ error: 'Could not extract media URL', node });
+      return res.status(500).json({
+        error: 'Unsupported media type',
+        type: node.__typename,
+        node,
+      });
     }
 
     return res.json({ success: true, mediaId: node.id, mediaUrl });
